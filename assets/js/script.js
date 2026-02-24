@@ -10,6 +10,7 @@ const SYSTEM_VERSION = 1;
 const FAVICON_FALLBACK_COLORS = ['#007bff', '#28a745', '#ffc107', '#17a2b8', '#dc3545'];
 const SEARCH_DEBOUNCE_DELAY = 200;
 const MAX_FAVICON_CACHE_SIZE = 100;
+const DOUBLE_CLICK_TIMEOUT = 300; // Waktu untuk detect double-click (ms)
 
 // State Global
 let links = [];
@@ -18,7 +19,6 @@ let modalAction = null;
 let searchDebounceTimer = null;
 let modalMergeAction = null;
 let lastRenderQuery = null;
-let activePressTimers = new WeakMap(); // Use WeakMap untuk auto-cleanup
 let dragState = {
     isDragging: false,
     draggedElement: null,
@@ -28,8 +28,6 @@ let dragState = {
     offsetX: 0,
     offsetY: 0
 };
-let cardClickTracks = new Map(); // Track double-clicks per card (dilimit ke ukuran tertentu)
-const MAX_CLICK_TRACKS = 100; // Limit untuk mencegah memory leak
 
 // Inisialisasi Data dengan Versioning
 function initData() {
@@ -212,17 +210,6 @@ function render() {
     // Urutkan berdasarkan skor eksponensial
     const sortedLinks = [...links].sort((a, b) => calculateScore(b) - calculateScore(a));
 
-    // Limit cardClickTracks untuk mencegah memory leak
-    if (cardClickTracks.size > MAX_CLICK_TRACKS) {
-        const entriesToDelete = cardClickTracks.size - MAX_CLICK_TRACKS;
-        let count = 0;
-        for (const key of cardClickTracks.keys()) {
-            if (count >= entriesToDelete) break;
-            cardClickTracks.delete(key);
-            count++;
-        }
-    }
-
     sortedLinks.forEach(link => {
         if (!link.name.toLowerCase().includes(search)) return;
 
@@ -232,57 +219,67 @@ function render() {
         div.tabIndex = 0;
         div.dataset.url = link.url;
 
-        // Pointer Events: Delete / Open / Drag via double-click
+        // Pointer Events Handler - Simplified untuk mengurangi redundansi
         let pressTimer = null;
-        let longPressTriggered = false;
-        let doubleClickDetected = false;
-
-        // Bind context untuk memastikan cleanup dengan benar
+        let isDoubleClick = false;
+        let lastClickTime = 0;
         const card = div;
+
+        // Helper: Reset card styling
+        const resetCardStyle = () => {
+            card.style.background = "";
+            card.style.cursor = "";
+            card.style.opacity = "";
+            card.style.zIndex = "";
+            card.style.transform = "";
+        };
+
+        // Helper: Apply drag styling
+        const applyDragStyle = () => {
+            card.style.background = "#e8f4fd";
+            card.style.cursor = "grab";
+        };
+
+        // Helper: Apply dragging styling
+        const applyDraggingStyle = () => {
+            card.style.opacity = "0.7";
+            card.style.cursor = "grabbing";
+            card.style.zIndex = "999";
+        };
 
         card.onpointerdown = (e) => {
             if (e.pointerType === "mouse" && e.button !== 0) return;
 
-            // Detect double-click untuk drag mode
-            const trackKey = link.url;
             const now = Date.now();
-            const lastClick = cardClickTracks.get(trackKey) || { time: 0, count: 0 };
-
-            if (now - lastClick.time < 300) {
-                // Double-click detected
-                doubleClickDetected = true;
-                cardClickTracks.delete(trackKey);
-                card.style.background = "#e8f4fd";
-                card.style.cursor = "grab";
+            const timeSinceLastClick = now - lastClickTime;
+            
+            // Detect double-click
+            if (timeSinceLastClick < DOUBLE_CLICK_TIMEOUT) {
+                isDoubleClick = true;
+                applyDragStyle();
             } else {
-                // Single click preparation
-                doubleClickDetected = false;
-                cardClickTracks.set(trackKey, { time: now, count: 1 });
-                longPressTriggered = false;
-                card.style.background = "#f8f9fa";
-            }
-
-            // Start long-press timer hanya jika bukan double-click preparation
-            if (!doubleClickDetected) {
+                isDoubleClick = false;
+                if (pressTimer) clearTimeout(pressTimer);
+                
+                // Long-press untuk delete (600ms)
                 pressTimer = setTimeout(() => {
-                    longPressTriggered = true;
                     deleteLink(link.url);
                 }, 600);
             }
+            
+            lastClickTime = now;
         };
 
         card.onpointermove = (e) => {
-            // Handle drag untuk reorder dengan double-click
-            if (doubleClickDetected && e.buttons === 1) {
+            // Handle drag hanya jika double-click detected dan mouse button ditekan
+            if (isDoubleClick && e.buttons === 1) {
                 if (!dragState.isDragging) {
                     dragState.isDragging = true;
                     dragState.draggedElement = card;
                     dragState.draggedUrl = link.url;
                     dragState.startX = e.clientX;
                     dragState.startY = e.clientY;
-                    card.style.opacity = "0.7";
-                    card.style.cursor = "grabbing";
-                    card.style.zIndex = "999";
+                    applyDraggingStyle();
                 }
 
                 if (dragState.isDragging) {
@@ -297,16 +294,11 @@ function render() {
             if (pressTimer) clearTimeout(pressTimer);
             
             if (dragState.isDragging && dragState.draggedElement === card) {
-                // Handle drag completion
+                // Handle drag completion - reorder links
                 dragState.isDragging = false;
                 dragState.draggedElement = null;
-                card.style.transform = "translate(0, 0)";
-                card.style.opacity = "1";
-                card.style.zIndex = "auto";
-                card.style.cursor = "pointer";
-                card.style.background = "white";
+                resetCardStyle();
                 
-                // Find link dari dragState URL
                 const draggedLink = links.find(l => l.url === dragState.draggedUrl);
                 if (draggedLink && Math.abs(dragState.offsetY) > 30) {
                     const currentIndex = links.indexOf(draggedLink);
@@ -322,31 +314,27 @@ function render() {
                         render();
                     }
                 }
+                resetCardStyle();
             } else {
-                card.style.background = "white";
-                card.style.cursor = "pointer";
+                resetCardStyle();
             }
+            isDoubleClick = false;
         };
 
         card.onpointerleave = () => {
-            if (pressTimer) clearTimeout(pressTimer);
-            if (!dragState.isDragging) {
-                card.style.background = "white";
-                card.style.cursor = "pointer";
-            }
+            if (pressTimer && !dragState.isDragging) clearTimeout(pressTimer);
+            if (!dragState.isDragging) resetCardStyle();
         };
 
         card.onclick = () => {
-            const trackKey = link.url;
-            if (longPressTriggered || dragState.isDragging) {
-                longPressTriggered = false;
-                cardClickTracks.delete(trackKey);
+            if (dragState.isDragging || lastClickTime > Date.now() - DOUBLE_CLICK_TIMEOUT) {
+                // Don't open link if dragging atau just double-clicked
                 return;
             }
             openLink(link.url);
         };
 
-        // Support keyboard navigate
+        // Keyboard navigation support
         card.onkeydown = (e) => {
             if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
@@ -357,7 +345,7 @@ function render() {
             }
         };
 
-        // Buat elemen icon
+        // Create icon element
         const iconData = getFavicon(link.url, link.name);
         const iconContainer = document.createElement("div");
         iconContainer.className = "icon-placeholder";
@@ -374,9 +362,7 @@ function render() {
             img.decoding = "async";
 
             // Fallback visual jika gambar gagal dimuat atau timeout
-            let timeoutId = null;
             const loadTimeoutId = setTimeout(() => {
-                timeoutId = null;
                 if (img.parentNode && iconContainer.parentNode) {
                     img.remove();
                     createFallbackIcon(iconContainer, iconData);
@@ -400,14 +386,26 @@ function render() {
             createFallbackIcon(iconContainer, iconData);
         }
 
-        // Elemen teks dengan sanitasi
+        // Text element dengan sanitasi
         const text = document.createElement("div");
         text.className = "link-card-text";
         text.title = link.name;
         text.textContent = link.name;
 
+        // Delete button - mobile-friendly dan accessible
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "link-card-delete";
+        deleteBtn.setAttribute("aria-label", `Hapus ${link.name}`);
+        deleteBtn.innerHTML = '<i class="fas fa-trash-alt"></i>';
+        deleteBtn.type = "button";
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            deleteLink(link.url);
+        };
+
         card.appendChild(iconContainer);
         card.appendChild(text);
+        card.appendChild(deleteBtn);
         fragment.appendChild(card);
     });
 
@@ -742,7 +740,6 @@ window.addEventListener("beforeunload", () => {
     modalAction = null;
     modalMergeAction = null;
     lastRenderQuery = null;
-    cardClickTracks.clear();
     dragState = {
         isDragging: false,
         draggedElement: null,
