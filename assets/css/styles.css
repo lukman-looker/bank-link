@@ -30,12 +30,14 @@ body {
 /* Link Card Style */
 .link-card {
     user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
     background: white;
     padding: clamp(12px, 3vw, 20px);
     border-radius: 12px;
     text-align: center;
     cursor: pointer;
-    transition: background 0.15s ease, transform 0.08s ease, box-shadow 0.15s ease;
+    transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
     border: 2px solid transparent;
     min-height: 120px;
@@ -45,9 +47,17 @@ body {
     justify-content: center;
     gap: 8px;
     position: relative;
+    touch-action: none;
 }
 
-.link-card:active {
+/* State ketika card sedang di-drag (tidak transition transform agar real-time) */
+.link-card.dragging-card {
+    transition: background 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    pointer-events: none;
+}
+
+/* Disable default active state saat dragging */
+.link-card:active:not(.dragging-card) {
     transform: scale(0.95);
 }
 
@@ -62,11 +72,7 @@ body {
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
-/* Dragging state untuk double-click drag */
-.link-card[style*="grab"] {
-    cursor: grab;
-}
-
+/* Dragging state for long-press drag */
 .link-card[style*="grabbing"] {
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
     border-color: #007bff;
@@ -111,6 +117,7 @@ body {
     -webkit-user-select: text;
 }
 
+/* Delete button - mobile-friendly dan accessible */
 .link-card-delete {
     position: absolute;
     top: 6px;
@@ -132,6 +139,7 @@ body {
     min-height: 28px;
     min-width: 28px;
     -webkit-appearance: none;
+    touch-action: manipulation;
 }
 
 .link-card-delete:hover {
@@ -146,6 +154,28 @@ body {
 .link-card:hover .link-card-delete,
 .link-card:focus-within .link-card-delete {
     display: flex;
+}
+
+/* Affordance: hint untuk long-press drag */
+.link-card::before {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 4px solid #ccc;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+@media (max-width: 768px) {
+    .link-card::before {
+        opacity: 0.6;
+    }
 }
 
 /* Header Style */

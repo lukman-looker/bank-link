@@ -10,7 +10,7 @@ const SYSTEM_VERSION = 1;
 const FAVICON_FALLBACK_COLORS = ['#007bff', '#28a745', '#ffc107', '#17a2b8', '#dc3545'];
 const SEARCH_DEBOUNCE_DELAY = 200;
 const MAX_FAVICON_CACHE_SIZE = 100;
-const DOUBLE_CLICK_TIMEOUT = 300; // Waktu untuk detect double-click (ms)
+const LONG_PRESS_TIMEOUT = 500; // Waktu untuk aktivasi drag mode (ms)
 
 // State Global
 let links = [];
@@ -26,7 +26,11 @@ let dragState = {
     startX: 0,
     startY: 0,
     offsetX: 0,
-    offsetY: 0
+    offsetY: 0,
+    draggingFromIndex: null,
+    lastHoverIndex: null,
+    workingOrder: null,
+    visibleLinks: null
 };
 
 // Inisialisasi Data dengan Versioning
@@ -154,7 +158,7 @@ function showModal(title, message, confirmText, action) {
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-message").textContent = message;
     document.getElementById("modal-confirm").textContent = confirmText;
-    modalAction = action;
+    modalAction = action || null;
     modalMergeAction = null;
     lastRenderQuery = null;
     
@@ -170,6 +174,7 @@ function showModal(title, message, confirmText, action) {
 function hideModal() {
     document.getElementById("modal").style.display = "none";
     modalAction = null;
+    modalMergeAction = null;
 }
 
 // Jalankan aksi dari modal
@@ -203,135 +208,190 @@ function render() {
     }
     lastRenderQuery = search;
 
+    // Reset drag state saat render ulang
+    dragState.isDragging = false;
+    dragState.draggedElement = null;
+    dragState.draggedUrl = null;
+
     const container = document.getElementById("links");
     container.innerHTML = "";
     const fragment = document.createDocumentFragment();
 
     // Urutkan berdasarkan skor eksponensial
     const sortedLinks = [...links].sort((a, b) => calculateScore(b) - calculateScore(a));
+    
+    // Filter berdasarkan search
+    const visibleLinks = sortedLinks.filter(link => link.name.toLowerCase().includes(search));
+    
+    // Store untuk drag-and-drop di dragState
+    dragState.workingOrder = [...visibleLinks];
+    dragState.visibleLinks = visibleLinks;
+    dragState.draggingFromIndex = null;
+    dragState.lastHoverIndex = null;
 
-    sortedLinks.forEach(link => {
-        if (!link.name.toLowerCase().includes(search)) return;
-
+    visibleLinks.forEach((link, index) => {
         const div = document.createElement("div");
         div.className = "link-card";
         div.role = "button";
         div.tabIndex = 0;
         div.dataset.url = link.url;
+        div.dataset.index = index;
+        div.dataset.originalIndex = index; // Store original index untuk reference
 
-        // Pointer Events Handler - Simplified untuk mengurangi redundansi
+        // Drag-drop state untuk card ini
         let pressTimer = null;
-        let isDoubleClick = false;
-        let lastClickTime = 0;
+        let isDragActive = false;
         const card = div;
 
         // Helper: Reset card styling
         const resetCardStyle = () => {
-            card.style.background = "";
-            card.style.cursor = "";
             card.style.opacity = "";
+            card.style.cursor = "";
             card.style.zIndex = "";
             card.style.transform = "";
-        };
-
-        // Helper: Apply drag styling
-        const applyDragStyle = () => {
-            card.style.background = "#e8f4fd";
-            card.style.cursor = "grab";
+            card.style.filter = "";
+            card.classList.remove("dragging-card");
         };
 
         // Helper: Apply dragging styling
         const applyDraggingStyle = () => {
-            card.style.opacity = "0.7";
+            card.style.opacity = "0.5";
             card.style.cursor = "grabbing";
-            card.style.zIndex = "999";
+            card.style.zIndex = "1000";
+            card.style.filter = "drop-shadow(0 8px 16px rgba(0,0,0,0.3))";
+            card.classList.add("dragging-card");
         };
 
         card.onpointerdown = (e) => {
+            // Hanya terima primary button (left click / main touch)
             if (e.pointerType === "mouse" && e.button !== 0) return;
-
-            const now = Date.now();
-            const timeSinceLastClick = now - lastClickTime;
             
-            // Detect double-click
-            if (timeSinceLastClick < DOUBLE_CLICK_TIMEOUT) {
-                isDoubleClick = true;
-                applyDragStyle();
-            } else {
-                isDoubleClick = false;
-                if (pressTimer) clearTimeout(pressTimer);
-                
-                // Long-press untuk delete (600ms)
-                pressTimer = setTimeout(() => {
-                    deleteLink(link.url);
-                }, 600);
-            }
-            
-            lastClickTime = now;
+            // Start long-press timer
+            pressTimer = setTimeout(() => {
+                isDragActive = true;
+                dragState.draggingFromIndex = index;
+                dragState.lastHoverIndex = index;
+                applyDraggingStyle();
+            }, 350);
         };
 
         card.onpointermove = (e) => {
-            // Handle drag hanya jika double-click detected dan mouse button ditekan
-            if (isDoubleClick && e.buttons === 1) {
-                if (!dragState.isDragging) {
-                    dragState.isDragging = true;
-                    dragState.draggedElement = card;
-                    dragState.draggedUrl = link.url;
-                    dragState.startX = e.clientX;
-                    dragState.startY = e.clientY;
-                    applyDraggingStyle();
-                }
+            // Hanya proses jika long-press sudah active
+            if (!isDragActive) return;
 
-                if (dragState.isDragging) {
-                    dragState.offsetX = e.clientX - dragState.startX;
-                    dragState.offsetY = e.clientY - dragState.startY;
-                    card.style.transform = `translate(${dragState.offsetX}px, ${dragState.offsetY}px)`;
+            // Mulai drag session
+            if (!dragState.isDragging) {
+                dragState.isDragging = true;
+                dragState.draggedElement = card;
+                dragState.draggedUrl = link.url;
+                dragState.startX = e.clientX;
+                dragState.startY = e.clientY;
+                if (pressTimer) clearTimeout(pressTimer);
+            }
+
+            // Update drag position
+            dragState.offsetX = e.clientX - dragState.startX;
+            dragState.offsetY = e.clientY - dragState.startY;
+            card.style.transform = `translate(${dragState.offsetX}px, ${dragState.offsetY}px)`;
+
+            // Hitung posisi hover dan lakukan swap jika perlu
+            const cardHeight = card.offsetHeight + 12;
+            const estimatedIndex = dragState.draggingFromIndex + Math.round(dragState.offsetY / cardHeight);
+            const newHoverIndex = Math.max(0, Math.min(dragState.workingOrder.length - 1, estimatedIndex));
+
+            if (newHoverIndex !== dragState.lastHoverIndex) {
+                // Perform swap dalam working order
+                if (newHoverIndex > dragState.lastHoverIndex) {
+                    for (let i = dragState.lastHoverIndex; i < newHoverIndex; i++) {
+                        [dragState.workingOrder[i], dragState.workingOrder[i + 1]] = 
+                        [dragState.workingOrder[i + 1], dragState.workingOrder[i]];
+                    }
+                } else {
+                    for (let i = dragState.lastHoverIndex; i > newHoverIndex; i--) {
+                        [dragState.workingOrder[i], dragState.workingOrder[i - 1]] = 
+                        [dragState.workingOrder[i - 1], dragState.workingOrder[i]];
+                    }
                 }
+                dragState.lastHoverIndex = newHoverIndex;
+                
+                // Update visual positions
+                const allCards = container.querySelectorAll(".link-card");
+                allCards.forEach((cardDOM) => {
+                    if (cardDOM === card) return; // Skip dragging card
+                    
+                    const cardUrl = cardDOM.dataset.url;
+                    const originalIndex = parseInt(cardDOM.dataset.originalIndex);
+                    const currentPosition = dragState.workingOrder.findIndex(l => l.url === cardUrl);
+                    
+                    if (currentPosition !== -1) {
+                        const moveDistance = (currentPosition - originalIndex) * cardHeight;
+                        cardDOM.style.transform = moveDistance !== 0 ? `translateY(${moveDistance}px)` : "";
+                        cardDOM.style.transition = "transform 0.15s ease-out";
+                    }
+                });
             }
         };
 
         card.onpointerup = () => {
+            // Clear long-press timer
             if (pressTimer) clearTimeout(pressTimer);
-            
-            if (dragState.isDragging && dragState.draggedElement === card) {
-                // Handle drag completion - reorder links
+
+            // Jika sedang drag, save perubahan
+            if (isDragActive && dragState.isDragging && dragState.draggedElement === card) {
                 dragState.isDragging = false;
                 dragState.draggedElement = null;
-                resetCardStyle();
-                
-                const draggedLink = links.find(l => l.url === dragState.draggedUrl);
-                if (draggedLink && Math.abs(dragState.offsetY) > 30) {
-                    const currentIndex = links.indexOf(draggedLink);
-                    const cardHeight = card.offsetHeight + 12;
-                    const moveDistance = Math.round(dragState.offsetY / cardHeight);
-                    const targetIndex = Math.max(0, Math.min(links.length - 1, currentIndex + moveDistance));
+
+                // Hanya update dan render jika ada perubahan posisi
+                const hasChanges = dragState.lastHoverIndex !== dragState.draggingFromIndex;
+                if (hasChanges) {
+                    links = dragState.workingOrder;
+                    save();
                     
-                    if (currentIndex !== targetIndex) {
-                        const [movedLink] = links.splice(currentIndex, 1);
-                        links.splice(targetIndex, 0, movedLink);
-                        save();
-                        lastRenderQuery = null;
-                        render();
-                    }
+                    // Reset state dan render ulang
+                    dragState.draggingFromIndex = null;
+                    dragState.lastHoverIndex = null;
+                    dragState.workingOrder = null;
+                    dragState.visibleLinks = null;
+                    render();
+                } else {
+                    // Tidak ada perubahan, hanya reset styling
+                    dragState.draggingFromIndex = null;
+                    dragState.lastHoverIndex = null;
+                    dragState.workingOrder = null;
+                    dragState.visibleLinks = null;
+                    resetCardStyle();
                 }
-                resetCardStyle();
-            } else {
-                resetCardStyle();
             }
-            isDoubleClick = false;
+
+            isDragActive = false;
+            resetCardStyle();
         };
 
         card.onpointerleave = () => {
-            if (pressTimer && !dragState.isDragging) clearTimeout(pressTimer);
-            if (!dragState.isDragging) resetCardStyle();
+            if (pressTimer) clearTimeout(pressTimer);
+            // Jangan reset jika sedang dragging
+            if (!dragState.isDragging) {
+                isDragActive = false;
+                resetCardStyle();
+            }
         };
 
-        card.onclick = () => {
-            if (dragState.isDragging || lastClickTime > Date.now() - DOUBLE_CLICK_TIMEOUT) {
-                // Don't open link if dragging atau just double-clicked
+        // Click handler - HANYA jika tidak dalam drag mode dan tidak long-pressed
+        card.onclick = (e) => {
+            if (dragState.isDragging || isDragActive) {
+                e.preventDefault();
+                e.stopPropagation();
+                isDragActive = false;
                 return;
             }
             openLink(link.url);
+        };
+
+        // Prevent context menu selama drag
+        card.oncontextmenu = (e) => {
+            if (dragState.isDragging) {
+                e.preventDefault();
+            }
         };
 
         // Keyboard navigation support
@@ -367,7 +427,7 @@ function render() {
                     img.remove();
                     createFallbackIcon(iconContainer, iconData);
                 }
-            }, 3000);
+            }, 1500);
 
             img.onerror = () => {
                 if (loadTimeoutId) clearTimeout(loadTimeoutId);
@@ -428,7 +488,13 @@ function openLink(url) {
         link.lastUsed = new Date().toISOString();
         save();
     }
-    window.open(url, "_blank");
+    try {
+        // Validasi URL sebelum membuka
+        const urlObj = new URL(url);
+        window.open(urlObj.href, "_blank");
+    } catch (err) {
+        showModal("Error", "URL tidak valid. Silakan coba lagi.", "OK", null);
+    }
 }
 
 // Toggle form tambah link dengan state management
@@ -682,8 +748,20 @@ function handleSearch() {
 window.onload = function() {
     // Setup keyboard shortcuts
     document.addEventListener("keydown", (e) => {
-        // Escape key untuk close modal/form
+        // Escape key untuk cancel drag / close modal/form
         if (e.key === "Escape") {
+            // Cancel drag jika sedang drag
+            if (dragState.isDragging) {
+                dragState.isDragging = false;
+                dragState.draggedElement = null;
+                dragState.draggingFromIndex = null;
+                dragState.lastHoverIndex = null;
+                dragState.workingOrder = null;
+                dragState.visibleLinks = null;
+                render();
+                return;
+            }
+            
             const modal = document.getElementById("modal");
             const form = document.getElementById("form");
             if (modal.style.display === "flex") {
@@ -747,7 +825,11 @@ window.addEventListener("beforeunload", () => {
         startX: 0,
         startY: 0,
         offsetX: 0,
-        offsetY: 0
+        offsetY: 0,
+        draggingFromIndex: null,
+        lastHoverIndex: null,
+        workingOrder: null,
+        visibleLinks: null
     };
     clearTimeout(searchDebounceTimer);
 });
