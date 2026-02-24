@@ -146,46 +146,85 @@ function isValidLink(obj) {
     );
 }
 
-// Dapatkan favicon dengan fallback dan memory management
-function getFavicon(url, name) {
+// Normalize URL
+function normalizeUrl(input) {
+    if (!input.startsWith("http")) {
+        input = "https://" + input;
+    }
+    return input;
+}
+
+// Fetch HTML via proxy untuk bypass CORS
+async function fetchHTMLViaProxy(url) {
+    const proxy = "https://api.allorigins.win/raw?url=" + encodeURIComponent(url);
+    const res = await fetch(proxy);
+    if (!res.ok) throw new Error("Fetch failed");
+    return await res.text();
+}
+
+// Extract favicon URL dari HTML
+function extractFaviconFromHTML(html, baseUrl) {
     try {
-        const domain = new URL(url).hostname;
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        
+        // Cari link dengan rel="icon" atau "shortcut icon" atau "apple-touch-icon"
+        const selectors = [
+            "link[rel='icon']",
+            "link[rel='shortcut icon']",
+            "link[rel='apple-touch-icon']",
+            "link[rel~='icon']"
+        ];
+        
+        for (const selector of selectors) {
+            const el = doc.querySelector(selector);
+            if (el && el.href) {
+                try {
+                    return new URL(el.getAttribute("href"), baseUrl).href;
+                } catch {
+                    continue;
+                }
+            }
+        }
+        
+        // Fallback ke /favicon.ico
+        return new URL("/favicon.ico", baseUrl).href;
+    } catch {
+        return new URL("/favicon.ico", baseUrl).href;
+    }
+}
+
+// Get favicon URL dengan cache (SATU-SATUNYA method)
+async function getFavicon(url, name) {
+    try {
+        const normalizedUrl = normalizeUrl(url);
+        const domain = new URL(normalizedUrl).hostname;
+        
+        // Check cache
         if (faviconCache[domain]) {
-            faviconCache[domain].lastAccess = Date.now();
             return faviconCache[domain];
         }
 
+        // Memory management
         const cacheKeys = Object.keys(faviconCache);
         if (cacheKeys.length >= MAX_FAVICON_CACHE_SIZE) {
-            let oldestKey = cacheKeys[0];
-            let oldestTime = faviconCache[oldestKey].lastAccess || Date.now();
-            
-            for (const key of cacheKeys) {
-                const accessTime = faviconCache[key].lastAccess || Date.now();
-                if (accessTime < oldestTime) {
-                    oldestTime = accessTime;
-                    oldestKey = key;
-                }
-            }
-            delete faviconCache[oldestKey];
+            delete faviconCache[cacheKeys[0]];
         }
 
-        const iconUrl = `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
-        faviconCache[domain] = {
-            url: iconUrl,
-            fallback: {
-                color: FAVICON_FALLBACK_COLORS[name.length % FAVICON_FALLBACK_COLORS.length]
-            },
-            lastAccess: Date.now()
-        };
-        return faviconCache[domain];
+        // Fetch HTML dan extract favicon
+        const html = await fetchHTMLViaProxy(normalizedUrl);
+        const faviconUrl = extractFaviconFromHTML(html, normalizedUrl);
+
+        // Cache dan return
+        faviconCache[domain] = faviconUrl;
+        return faviconUrl;
     } catch {
-        return {
-            url: "",
-            fallback: {
-                color: FAVICON_FALLBACK_COLORS[Math.floor(Math.random() * FAVICON_FALLBACK_COLORS.length)]
-            }
-        };
+        // Fallback ke DuckDuckGo
+        try {
+            const domain = new URL(url).hostname;
+            return `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+        } catch {
+            return null;
+        }
     }
 }
 
@@ -514,45 +553,63 @@ function render() {
             }
         };
 
-        // Create icon element
-        const iconData = getFavicon(link.url, link.name);
+        // Create icon element - async favicon loading
         const iconContainer = document.createElement("div");
         iconContainer.className = "icon-placeholder";
+        
+        // Get fallback icon data
+        const fallbackColor = FAVICON_FALLBACK_COLORS[link.name.length % FAVICON_FALLBACK_COLORS.length];
+        const fallbackLetter = link.name.charAt(0).toUpperCase();
 
-        if (iconData.url) {
-            const img = document.createElement("img");
-            img.src = iconData.url;
-            img.alt = `${link.name} icon`;
-            img.style.width = "100%";
-            img.style.height = "100%";
-            img.style.borderRadius = "12px";
-            img.style.objectFit = "cover";
-            img.loading = "lazy";
-            img.decoding = "async";
+        // Load favicon asynchronously
+        (async () => {
+            try {
+                const faviconUrl = await getFavicon(link.url, link.name);
+                
+                // Check if container still exists in DOM
+                if (!iconContainer.parentNode) return;
+                
+                const img = document.createElement("img");
+                img.src = faviconUrl;
+                img.alt = `${link.name} icon`;
+                img.style.width = "100%";
+                img.style.height = "100%";
+                img.style.borderRadius = "12px";
+                img.style.objectFit = "cover";
 
-            const loadTimeoutId = setTimeout(() => {
-                if (img.parentNode && iconContainer.parentNode) {
-                    img.remove();
-                    createFallbackIcon(iconContainer, iconData);
+                let timeoutId;
+                let imgLoaded = false;
+
+                const onImageFail = () => {
+                    if (timeoutId) clearTimeout(timeoutId);
+                    if (img.parentNode && iconContainer.parentNode) {
+                        img.remove();
+                        createFallbackIcon(iconContainer, fallbackColor, fallbackLetter);
+                    }
+                };
+
+                img.onerror = onImageFail;
+                img.onload = () => {
+                    imgLoaded = true;
+                    if (timeoutId) clearTimeout(timeoutId);
+                };
+
+                // Timeout fallback
+                timeoutId = setTimeout(() => {
+                    if (!imgLoaded && img.parentNode) {
+                        onImageFail();
+                    }
+                }, 3000);
+
+                iconContainer.innerHTML = "";
+                iconContainer.appendChild(img);
+            } catch {
+                // Fallback icon jika gagal
+                if (iconContainer.parentNode) {
+                    createFallbackIcon(iconContainer, fallbackColor, fallbackLetter);
                 }
-            }, 1500);
-
-            img.onerror = () => {
-                if (loadTimeoutId) clearTimeout(loadTimeoutId);
-                if (img.parentNode && iconContainer.parentNode) {
-                    img.remove();
-                    createFallbackIcon(iconContainer, iconData);
-                }
-            };
-
-            img.onload = () => {
-                if (loadTimeoutId) clearTimeout(loadTimeoutId);
-            };
-            
-            iconContainer.appendChild(img);
-        } else {
-            createFallbackIcon(iconContainer, iconData);
-        }
+            }
+        })();
 
         // Text element
         const text = document.createElement("div");
@@ -592,12 +649,26 @@ function render() {
     container.appendChild(fragment);
 }
 
-// Helper function untuk membuat fallback icon
-function createFallbackIcon(container, iconData) {
-    container.style.background = iconData.fallback.color;
+// Helper function untuk membuat fallback icon dengan letter
+function createFallbackIcon(container, color, letter) {
+    container.style.background = color;
     container.style.color = "white";
     container.innerHTML = "";
-    container.setAttribute("aria-label", `favicon`);
+    container.setAttribute("aria-label", "favicon");
+    
+    // Create letter div
+    const letterDiv = document.createElement("div");
+    letterDiv.style.display = "flex";
+    letterDiv.style.alignItems = "center";
+    letterDiv.style.justifyContent = "center";
+    letterDiv.style.width = "100%";
+    letterDiv.style.height = "100%";
+    letterDiv.style.fontSize = "32px";
+    letterDiv.style.fontWeight = "bold";
+    letterDiv.style.borderRadius = "12px";
+    letterDiv.textContent = letter || "?";
+    
+    container.appendChild(letterDiv);
 }
 
 // Buka link di tab baru
