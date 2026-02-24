@@ -6,69 +6,77 @@ function sanitizeInput(str) {
 }
 
 // Konfigurasi Sistem
-const SYSTEM_VERSION = 1;
-const FAVICON_FALLBACK_COLORS = ['#007bff', '#28a745', '#ffc107', '#17a2b8', '#dc3545'];
+const SYSTEM_VERSION = 2;
+const FAVICON_FALLBACK_COLORS = ['#ff6b6b', '#ff6b9d', '#845ef7', '#339af0', '#1c7ed6', '#51cf66', '#ffd43b', '#ff922b'];
 const SEARCH_DEBOUNCE_DELAY = 200;
 const MAX_FAVICON_CACHE_SIZE = 100;
-const LONG_PRESS_TIMEOUT = 500; // Waktu untuk aktivasi drag mode (ms)
+const LONG_PRESS_TIMEOUT = 350;
+const TOAST_DURATION = 3500;
+
+// Sort Options
+const SORT_OPTIONS = {
+    manual: 'Manual Order',
+    recent: 'Paling Baru Ditambah',
+    mostUsed: 'Paling Sering Digunakan',
+    alphabetical: 'A-Z'
+};
 
 // State Global
 let links = [];
 let faviconCache = {};
 let modalAction = null;
 let searchDebounceTimer = null;
-let modalMergeAction = null;
 let lastRenderQuery = null;
+let currentSort = 'manual';
+let currentTheme = 'light';
 let dragState = {
     isDragging: false,
     draggedElement: null,
-    draggedUrl: null,
+    draggingFromIndex: null,
+    lastHoverIndex: null,
     startX: 0,
     startY: 0,
     offsetX: 0,
-    offsetY: 0,
-    draggingFromIndex: null,
-    lastHoverIndex: null,
-    workingOrder: null,
-    visibleLinks: null
+    offsetY: 0
 };
 
 // Inisialisasi Data dengan Versioning
 function initData() {
+    loadTheme();
+    currentSort = localStorage.getItem('sortOption') || 'manual';
     const stored = localStorage.getItem("linkBank");
     if (stored) {
         try {
             const parsed = JSON.parse(stored);
-            // Cek versi sistem untuk kompatibilitas
             if (parsed.version !== SYSTEM_VERSION) {
                 showModal(
-                    "Perhatian",
-                    "Data ditemukan dari versi lama. Akan dilakukan konversi otomatis.",
+                    "Data Lama Ditemukan",
+                    "Data Anda akan dikonversi ke format terbaru. Tekan 'Lanjutkan'.",
                     "Lanjutkan",
+                    {type: 'info'},
                     () => migrateOldData(parsed.data || [])
                 );
                 return;
             }
             links = parsed.data || [];
         } catch (err) {
-            showModal(
-                "Error",
-                "Data tersimpan rusak. Akan menggunakan data baru.",
-                "OK",
-                () => links = []
-            );
+            showModal("Error", "Data tersimpan rusak. Akan menggunakan data baru.", "OK", {type: 'error'});
+            links = [];
         }
     }
+    setupKeyboardShortcuts();
     render();
 }
 
-// Migrasikan data versi lama (jika ada)
+// Migrasikan data versi lama
 function migrateOldData(oldData) {
     links = oldData.map(item => ({
         name: item.name || "",
         url: item.url || "",
         clicks: item.clicks || 0,
-        lastUsed: item.lastUsed || new Date().toISOString()
+        lastUsed: item.lastUsed || new Date().toISOString(),
+        color: "",
+        favorite: false
     }));
     save();
     render();
@@ -82,13 +90,47 @@ function save() {
     }));
 }
 
+// Setup Keyboard Shortcuts
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey || e.metaKey) {
+            if (e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('search').focus();
+            } else if (e.key === 'n') {
+                e.preventDefault();
+                toggleForm();
+            }
+        }
+    });
+}
+
+// Dark Mode Toggle
+function toggleDarkMode() {
+    currentTheme = currentTheme === 'light' ? 'dark' : 'light';
+    applyTheme();
+    localStorage.setItem('theme', currentTheme);
+    showToast(`Mode ${currentTheme === 'dark' ? 'Gelap' : 'Terang'} Diaktifkan`, 'info');
+}
+
+function applyTheme() {
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    const themeIcon = document.getElementById('theme-toggle');
+    if (themeIcon) {
+        themeIcon.innerHTML = currentTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+    }
+}
+
+function loadTheme() {
+    currentTheme = localStorage.getItem('theme') || 'light';
+    applyTheme();
+}
+
 // Hitung skor dengan Exponential Decay
 function calculateScore(link) {
     const now = Date.now();
     const lastUsed = link.lastUsed ? new Date(link.lastUsed).getTime() : now;
     const days = (now - lastUsed) / (1000 * 60 * 60 * 24);
-
-    // Faktor decay eksponensial (0.15 = kecepatan decay yang optimal)
     const decayFactor = Math.exp(-0.15 * days);
     return (link.clicks || 0) * decayFactor;
 }
@@ -104,20 +146,17 @@ function isValidLink(obj) {
     );
 }
 
-// Dapatkan favicon dengan fallback global dan memory management
+// Dapatkan favicon dengan fallback dan memory management
 function getFavicon(url, name) {
     try {
         const domain = new URL(url).hostname;
         if (faviconCache[domain]) {
-            // Update access time untuk LRU tracking
             faviconCache[domain].lastAccess = Date.now();
             return faviconCache[domain];
         }
 
-        // Prevent cache memory leak - implement LRU cache eviction
         const cacheKeys = Object.keys(faviconCache);
         if (cacheKeys.length >= MAX_FAVICON_CACHE_SIZE) {
-            // Hapus entry dengan lastAccess paling lama
             let oldestKey = cacheKeys[0];
             let oldestTime = faviconCache[oldestKey].lastAccess || Date.now();
             
@@ -131,10 +170,7 @@ function getFavicon(url, name) {
             delete faviconCache[oldestKey];
         }
 
-        // Endpoint utama
         const iconUrl = `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
-
-        // Cache favicon dengan fallback color dan timestamp
         faviconCache[domain] = {
             url: iconUrl,
             fallback: {
@@ -153,20 +189,50 @@ function getFavicon(url, name) {
     }
 }
 
+// Toast Notification System
+function showToast(message, type = 'info', duration = TOAST_DURATION) {
+    const toast = document.getElementById('toast');
+    toast.textContent = '';
+    toast.className = `toast ${type} show`;
+    
+    const iconMap = {
+        success: '<i class="fas fa-check-circle"></i>',
+        error: '<i class="fas fa-exclamation-circle"></i>',
+        warning: '<i class="fas fa-exclamation-triangle"></i>',
+        info: '<i class="fas fa-info-circle"></i>'
+    };
+    
+    toast.innerHTML = `${iconMap[type] || iconMap.info} <span>${message}</span>`;
+    
+    setTimeout(() => {
+        toast.classList.remove('show');
+    }, duration);
+}
+
 // Tampilkan custom modal
-function showModal(title, message, confirmText, action) {
+function showModal(title, message, confirmText, options = {}, action) {
+    const { type = 'info'} = options;
+    
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-message").textContent = message;
     document.getElementById("modal-confirm").textContent = confirmText;
+    
+    const modalContent = document.getElementById("modal-content");
+    modalContent.className = `modal-content modal-${type}`;
+    
+    const iconContainer = document.getElementById("modal-icon");
+    const iconMap = {
+        success: { icon: '<i class="fas fa-check-circle"></i>', class: 'success' },
+        error: { icon: '<i class="fas fa-times-circle"></i>', class: 'error' },
+        warning: { icon: '<i class="fas fa-exclamation-circle"></i>', class: 'warning' },
+        info: { icon: '<i class="fas fa-info-circle"></i>', class: 'info' }
+    };
+    
+    const iconData = iconMap[type] || iconMap.info;
+    iconContainer.innerHTML = iconData.icon;
+    iconContainer.className = `modal-icon ${iconData.class}`;
+    
     modalAction = action || null;
-    modalMergeAction = null;
-    lastRenderQuery = null;
-    
-    // Reset cancel button to default
-    const cancelBtn = document.getElementById("modal-cancel");
-    cancelBtn.textContent = "Batal";
-    cancelBtn.onclick = hideModal;
-    
     document.getElementById("modal").style.display = "flex";
 }
 
@@ -174,7 +240,6 @@ function showModal(title, message, confirmText, action) {
 function hideModal() {
     document.getElementById("modal").style.display = "none";
     modalAction = null;
-    modalMergeAction = null;
 }
 
 // Jalankan aksi dari modal
@@ -187,19 +252,65 @@ function executeModalAction() {
 function deleteLink(url) {
     showModal(
         "Konfirmasi Hapus",
-        "Apakah Anda yakin ingin menghapus link ini? Tindakan ini tidak dapat dibatalkan.",
+        "Apakah Anda yakin ingin menghapus link ini?",
         "Hapus",
+        { type: 'warning' },
         () => {
             links = links.filter(link => link.url !== url);
             save();
             lastRenderQuery = null;
             render();
+            showToast("Link berhasil dihapus", 'success');
         }
     );
 }
 
+// Toggle Favorites
+function toggleFavorite(url) {
+    const link = links.find(l => l.url === url);
+    if (link) {
+        link.favorite = !link.favorite;
+        save();
+        render();
+        showToast(link.favorite ? "Ditambahkan ke favorit" : "Dihapus dari favorit", 'info');
+    }
+}
+
+// Change Sort Option
+function changeSortOption() {
+    const sortSelect = document.getElementById('sort-select');
+    currentSort = sortSelect.value;
+    localStorage.setItem('sortOption', currentSort);
+    lastRenderQuery = null;
+    render();
+}
+
+// Apply Sorting
+function applySorting(filteredLinks) {
+    const sorted = [...filteredLinks];
+    switch (currentSort) {
+        case 'recent':
+            sorted.sort((a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0));
+            break;
+        case 'mostUsed':
+            sorted.sort((a, b) => calculateScore(b) - calculateScore(a));
+            break;
+        case 'alphabetical':
+            sorted.sort((a, b) => a.name.localeCompare(b.name));
+            break;
+        case 'manual':
+        default:
+            // Keep original order
+            break;
+    }
+    return sorted;
+}
+
 // Render dengan debounce untuk search
 function render() {
+    // Update sort dropdown
+    document.getElementById('sort-select').value = currentSort;
+    
     const search = document.getElementById("search").value.toLowerCase().trim();
     
     // Skip render jika query tidak berubah
@@ -208,43 +319,76 @@ function render() {
     }
     lastRenderQuery = search;
 
-    // Reset drag state saat render ulang
-    dragState.isDragging = false;
-    dragState.draggedElement = null;
-    dragState.draggedUrl = null;
-
     const container = document.getElementById("links");
     container.innerHTML = "";
     const fragment = document.createDocumentFragment();
 
-    // Urutkan berdasarkan skor eksponensial
-    const sortedLinks = [...links].sort((a, b) => calculateScore(b) - calculateScore(a));
+    // Filter based on search
+    const filteredLinks = links.filter(link => 
+        link.name.toLowerCase().includes(search) || 
+        link.url.toLowerCase().includes(search)
+    );
     
-    // Filter berdasarkan search
-    const visibleLinks = sortedLinks.filter(link => link.name.toLowerCase().includes(search));
+    // Apply sorting
+    const visibleLinks = applySorting(filteredLinks);
     
-    // Store untuk drag-and-drop di dragState
-    dragState.workingOrder = [...visibleLinks];
-    dragState.visibleLinks = visibleLinks;
+    // Update stats
+    const statsCount = document.getElementById('links-count');
+    if (statsCount) {
+        statsCount.textContent = visibleLinks.length;
+    }
+    
+    // Show/hide empty states
+    const emptyState = document.getElementById('empty-state');
+    const noResultsState = document.getElementById('no-results-state');
+    
+    if (links.length === 0) {
+        // Truly empty
+        if (emptyState) emptyState.style.display = 'flex';
+        if (noResultsState) noResultsState.style.display = 'none';
+        if (container) container.style.display = 'none';
+        return;
+    } else if (visibleLinks.length === 0 && search) {
+        // Search returned no results
+        if (emptyState) emptyState.style.display = 'none';
+        if (noResultsState) noResultsState.style.display = 'flex';
+        if (container) container.style.display = 'none';
+        return;
+    } else {
+        // Show cards
+        if (emptyState) emptyState.style.display = 'none';
+        if (noResultsState) noResultsState.style.display = 'none';
+        if (container) container.style.display = 'grid';
+    }
+    
+    // Reset drag state saat render ulang
+    dragState.isDragging = false;
+    dragState.draggedElement = null;
     dragState.draggingFromIndex = null;
     dragState.lastHoverIndex = null;
 
     visibleLinks.forEach((link, index) => {
         const div = document.createElement("div");
-        div.className = "link-card";
+        div.className = "link-card" + (link.favorite ? " favorite" : "");
+        if (link.color) {
+            div.setAttribute("data-color", link.color);
+        }
+        if (currentSort === 'manual') {
+            div.classList.add("drag-handle");
+        }
         div.role = "button";
         div.tabIndex = 0;
         div.dataset.url = link.url;
         div.dataset.index = index;
-        div.dataset.originalIndex = index; // Store original index untuk reference
+        div.dataset.originalIndex = index;
 
-        // Drag-drop state untuk card ini
+        // Local drag state per card
         let pressTimer = null;
-        let isDragActive = false;
+        let dragStarted = false;
         const card = div;
 
-        // Helper: Reset card styling
-        const resetCardStyle = () => {
+        // Reset styling
+        const resetStyle = () => {
             card.style.opacity = "";
             card.style.cursor = "";
             card.style.zIndex = "";
@@ -253,8 +397,8 @@ function render() {
             card.classList.remove("dragging-card");
         };
 
-        // Helper: Apply dragging styling
-        const applyDraggingStyle = () => {
+        // Apply drag styling
+        const applyDragStyle = () => {
             card.style.opacity = "0.5";
             card.style.cursor = "grabbing";
             card.style.zIndex = "1000";
@@ -263,149 +407,100 @@ function render() {
         };
 
         card.onpointerdown = (e) => {
-            // Hanya terima primary button (left click / main touch)
             if (e.pointerType === "mouse" && e.button !== 0) return;
+            if (currentSort !== 'manual') return; // Only drag in manual mode
             
-            // Start long-press timer
             pressTimer = setTimeout(() => {
-                isDragActive = true;
+                dragStarted = true;
+                dragState.isDragging = true;
+                dragState.draggedElement = card;
                 dragState.draggingFromIndex = index;
                 dragState.lastHoverIndex = index;
-                applyDraggingStyle();
-            }, 350);
+                dragState.startX = e.clientX;
+                dragState.startY = e.clientY;
+                dragState.offsetX = 0;
+                dragState.offsetY = 0;
+                applyDragStyle();
+            }, LONG_PRESS_TIMEOUT);
         };
 
         card.onpointermove = (e) => {
-            // Hanya proses jika long-press sudah active
-            if (!isDragActive) return;
+            if (!dragStarted || !dragState.isDragging) return;
 
-            // Mulai drag session
-            if (!dragState.isDragging) {
-                dragState.isDragging = true;
-                dragState.draggedElement = card;
-                dragState.draggedUrl = link.url;
-                dragState.startX = e.clientX;
-                dragState.startY = e.clientY;
-                if (pressTimer) clearTimeout(pressTimer);
-            }
-
-            // Update drag position
             dragState.offsetX = e.clientX - dragState.startX;
             dragState.offsetY = e.clientY - dragState.startY;
             card.style.transform = `translate(${dragState.offsetX}px, ${dragState.offsetY}px)`;
 
-            // Hitung posisi hover dan lakukan swap jika perlu
-            const cardHeight = card.offsetHeight + 12;
+            const cardHeight = card.offsetHeight + 16;
             const estimatedIndex = dragState.draggingFromIndex + Math.round(dragState.offsetY / cardHeight);
-            const newHoverIndex = Math.max(0, Math.min(dragState.workingOrder.length - 1, estimatedIndex));
+            const newIndex = Math.max(0, Math.min(visibleLinks.length - 1, estimatedIndex));
 
-            if (newHoverIndex !== dragState.lastHoverIndex) {
-                // Perform swap dalam working order
-                if (newHoverIndex > dragState.lastHoverIndex) {
-                    for (let i = dragState.lastHoverIndex; i < newHoverIndex; i++) {
-                        [dragState.workingOrder[i], dragState.workingOrder[i + 1]] = 
-                        [dragState.workingOrder[i + 1], dragState.workingOrder[i]];
-                    }
-                } else {
-                    for (let i = dragState.lastHoverIndex; i > newHoverIndex; i--) {
-                        [dragState.workingOrder[i], dragState.workingOrder[i - 1]] = 
-                        [dragState.workingOrder[i - 1], dragState.workingOrder[i]];
-                    }
-                }
-                dragState.lastHoverIndex = newHoverIndex;
-                
-                // Update visual positions - gunakan fresh selector untuk reliable access
-                const linksContainer = document.getElementById("links");
-                const allCards = linksContainer.querySelectorAll(".link-card");
-                allCards.forEach((cardDOM) => {
-                    if (cardDOM === card) return; // Skip dragging card
-                    
-                    const cardUrl = cardDOM.dataset.url;
-                    const originalIndex = parseInt(cardDOM.dataset.originalIndex);
-                    const currentPosition = dragState.workingOrder.findIndex(l => l.url === cardUrl);
-                    
-                    if (currentPosition !== -1) {
-                        const moveDistance = (currentPosition - originalIndex) * cardHeight;
-                        cardDOM.style.transform = moveDistance !== 0 ? `translateY(${moveDistance}px)` : "";
-                        cardDOM.style.transition = "transform 0.15s ease-out";
-                    }
+            if (newIndex !== dragState.lastHoverIndex) {
+                dragState.lastHoverIndex = newIndex;
+
+                const temp = visibleLinks[dragState.draggingFromIndex];
+                visibleLinks.splice(dragState.draggingFromIndex, 1);
+                visibleLinks.splice(newIndex, 0, temp);
+                dragState.draggingFromIndex = newIndex;
+
+                const allCards = container.querySelectorAll(".link-card");
+                allCards.forEach((c) => {
+                    if (c === card) return;
+                    const idx = visibleLinks.findIndex(l => l.url === c.dataset.url);
+                    const origIdx = parseInt(c.dataset.originalIndex);
+                    const distance = (idx - origIdx) * cardHeight;
+                    c.style.transform = distance !== 0 ? `translateY(${distance}px)` : "";
+                    c.style.transition = "transform 0.15s ease-out";
                 });
             }
         };
 
         card.onpointerup = () => {
-            // Clear long-press timer
             if (pressTimer) clearTimeout(pressTimer);
 
-            // Jika sedang drag, save perubahan
-            if (isDragActive && dragState.isDragging && dragState.draggedElement === card) {
+            if (dragStarted && dragState.isDragging) {
+                dragStarted = false;
                 dragState.isDragging = false;
-                dragState.draggedElement = null;
 
-                // Hanya update dan render jika ada perubahan posisi
-                const hasChanges = dragState.lastHoverIndex !== dragState.draggingFromIndex;
-                if (hasChanges) {
-                    // Gunakan working order yang sudah di-reorder sebagai new links array
-                    links = dragState.workingOrder;
+                const initialIndex = parseInt(card.dataset.originalIndex);
+                if (dragState.lastHoverIndex !== initialIndex) {
+                    links = visibleLinks;
                     save();
-                    
-                    // Animate card ke posisi final dengan smooth transition
-                    const cardHeight = card.offsetHeight + 12;
-                    const moveDistance = (dragState.lastHoverIndex - dragState.draggingFromIndex) * cardHeight;
-                    
-                    // Apply smooth transition
-                    card.style.transition = "transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)";
-                    card.style.transform = `translateY(${moveDistance}px)`;
-                    card.style.opacity = "1";
-                    card.classList.remove("dragging-card");
-                    
-                    // After animation completes, render for clean state
-                    setTimeout(() => {
-                        dragState.draggingFromIndex = null;
-                        dragState.lastHoverIndex = null;
-                        dragState.workingOrder = null;
-                        dragState.visibleLinks = null;
-                        render();
-                    }, 300);
-                } else {
-                    // Tidak ada perubahan, hanya reset styling
+                }
+
+                const cardHeight = card.offsetHeight + 16;
+                const finalDistance = (dragState.lastHoverIndex - initialIndex) * cardHeight;
+                
+                card.style.transition = "transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)";
+                card.style.transform = `translateY(${finalDistance}px)`;
+                card.style.opacity = "1";
+
+                setTimeout(() => {
+                    dragState.draggedElement = null;
                     dragState.draggingFromIndex = null;
                     dragState.lastHoverIndex = null;
-                    dragState.workingOrder = null;
-                    dragState.visibleLinks = null;
-                    resetCardStyle();
-                }
+                    render();
+                }, 300);
             }
 
-            isDragActive = false;
-            resetCardStyle();
+            resetStyle();
         };
 
         card.onpointerleave = () => {
             if (pressTimer) clearTimeout(pressTimer);
-            // Jangan reset jika sedang dragging
             if (!dragState.isDragging) {
-                isDragActive = false;
-                resetCardStyle();
+                dragStarted = false;
+                resetStyle();
             }
         };
 
-        // Click handler - HANYA jika tidak dalam drag mode dan tidak long-pressed
         card.onclick = (e) => {
-            if (dragState.isDragging || isDragActive) {
+            if (dragState.isDragging) {
                 e.preventDefault();
                 e.stopPropagation();
-                isDragActive = false;
                 return;
             }
             openLink(link.url);
-        };
-
-        // Prevent context menu selama drag
-        card.oncontextmenu = (e) => {
-            if (dragState.isDragging) {
-                e.preventDefault();
-            }
         };
 
         // Keyboard navigation support
@@ -430,12 +525,11 @@ function render() {
             img.alt = `${link.name} icon`;
             img.style.width = "100%";
             img.style.height = "100%";
-            img.style.borderRadius = "50%";
+            img.style.borderRadius = "12px";
             img.style.objectFit = "cover";
             img.loading = "lazy";
             img.decoding = "async";
 
-            // Fallback visual jika gambar gagal dimuat atau timeout
             const loadTimeoutId = setTimeout(() => {
                 if (img.parentNode && iconContainer.parentNode) {
                     img.remove();
@@ -460,13 +554,24 @@ function render() {
             createFallbackIcon(iconContainer, iconData);
         }
 
-        // Text element dengan sanitasi
+        // Text element
         const text = document.createElement("div");
         text.className = "link-card-text";
         text.title = link.name;
         text.textContent = link.name;
 
-        // Delete button - mobile-friendly dan accessible
+        // Favorite button
+        const favoriteBtn = document.createElement("button");
+        favoriteBtn.className = "link-card-favorite";
+        favoriteBtn.setAttribute("aria-label", `Toggle ${link.name} favorit`);
+        favoriteBtn.innerHTML = link.favorite ? '<i class="fas fa-star"></i>' : '<i class="far fa-star"></i>';
+        favoriteBtn.type = "button";
+        favoriteBtn.onclick = (e) => {
+            e.stopPropagation();
+            toggleFavorite(link.url);
+        };
+
+        // Delete button
         const deleteBtn = document.createElement("button");
         deleteBtn.className = "link-card-delete";
         deleteBtn.setAttribute("aria-label", `Hapus ${link.name}`);
@@ -479,6 +584,7 @@ function render() {
 
         card.appendChild(iconContainer);
         card.appendChild(text);
+        card.appendChild(favoriteBtn);
         card.appendChild(deleteBtn);
         fragment.appendChild(card);
     });
@@ -503,26 +609,27 @@ function openLink(url) {
         save();
     }
     try {
-        // Validasi URL sebelum membuka
         const urlObj = new URL(url);
         window.open(urlObj.href, "_blank");
     } catch (err) {
-        showModal("Error", "URL tidak valid. Silakan coba lagi.", "OK", null);
+        showModal("Error", "URL tidak valid. Silakan coba lagi.", "OK", {type: 'error'});
     }
 }
 
-// Toggle form tambah link dengan state management
+// Toggle form tambah link
 function toggleForm() {
+    const formContainer = document.getElementById("form-container");
     const form = document.getElementById("form");
     const isOpen = form.style.display !== "none";
-    form.style.display = isOpen ? "none" : "block";
     
-    if (!isOpen) {
-        // Focus pada input pertama saat form dibuka
-        setTimeout(() => document.getElementById("name").focus(), 100);
-    } else {
-        // Clear form saat ditutup
+    if (isOpen) {
+        formContainer.classList.add("collapsed");
+        form.style.display = "none";
         clearForm();
+    } else {
+        formContainer.classList.remove("collapsed");
+        form.style.display = "block";
+        setTimeout(() => document.getElementById("name").focus(), 100);
     }
 }
 
@@ -530,67 +637,69 @@ function toggleForm() {
 function clearForm() {
     document.getElementById("name").value = "";
     document.getElementById("url").value = "";
+    document.getElementById("color-none").checked = true;
 }
 
 // Tambah link dengan validasi ketat
 function addLink() {
     const name = document.getElementById("name").value.trim();
     const urlInput = document.getElementById("url").value.trim();
+    const color = document.querySelector('input[name="color"]:checked').value;
     let url = urlInput;
 
-    // Validasi input kosong
     if (!name || !url) {
-        return showModal("Peringatan", "Nama dan URL tidak boleh kosong!", "OK", null);
+        showModal("Peringatan", "Nama dan URL tidak boleh kosong!", "OK", {type: 'warning'});
+        return;
     }
 
-    // Validasi panjang nama
     if (name.length > 100) {
-        return showModal("Peringatan", "Nama link terlalu panjang (max 100 karakter)!", "OK", null);
+        showModal("Peringatan", "Nama link terlalu panjang (max 100 karakter)!", "OK", {type: 'warning'});
+        return;
     }
 
-    // Validasi panjang URL
     if (url.length > 2048) {
-        return showModal("Peringatan", "URL terlalu panjang (max 2048 karakter)!", "OK", null);
+        showModal("Peringatan", "URL terlalu panjang (max 2048 karakter)!", "OK", {type: 'warning'});
+        return;
     }
 
-    // Tambahkan protokol jika belum ada
     if (!url.match(/^https?:\/\//i)) {
         url = `https://${url}`;
     }
 
-    // Validasi URL format
     try {
         const urlObj = new URL(url);
-        // Additional validation: check if domain is not empty
         if (!urlObj.hostname || urlObj.hostname.length === 0) {
             throw new Error("Domain tidak valid");
         }
     } catch {
-        return showModal("Error", "URL yang dimasukkan tidak valid!", "OK", null);
+        showModal("Error", "URL yang dimasukkan tidak valid!", "OK", {type: 'error'});
+        return;
     }
 
-    // Duplikasi normalisasi URL untuk pengecekan
     const normalizedUrl = new URL(url).href;
     if (links.some(link => new URL(link.url).href === normalizedUrl)) {
-        return showModal("Peringatan", "Link dengan URL ini sudah ada!", "OK", null);
+        showModal("Peringatan", "Link dengan URL ini sudah ada!", "OK", {type: 'warning'});
+        return;
     }
 
-    // Tambahkan link baru dengan sanitasi
     links.unshift({
         name: sanitizeInput(name),
         url: normalizedUrl,
         clicks: 0,
-        lastUsed: new Date().toISOString()
+        lastUsed: new Date().toISOString(),
+        color: color || "",
+        favorite: false
     });
 
     save();
     lastRenderQuery = null;
     render();
     clearForm();
-    document.getElementById("form").style.display = "none";
+    toggleForm();
+    showToast("Link berhasil ditambahkan", 'success');
 }
 
-// Export data dengan format terstruktur dan proper cleanup
+// Export data
 function exportData() {
     try {
         const exportData = {
@@ -607,19 +716,18 @@ function exportData() {
         document.body.appendChild(a);
         a.click();
         
-        // Cleanup: remove element dan revoke URL setelah download
         setTimeout(() => {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }, 100);
         
-        showModal("Berhasil", "Data berhasil diekspor sebagai file JSON!", "OK", null);
+        showToast("Data berhasil diekspor", 'success');
     } catch (err) {
-        showModal("Error", `Gagal mengekspor data: ${err.message}`, "OK", null);
+        showModal("Error", `Gagal mengekspor data: ${err.message}`, "OK", {type: 'error'});
     }
 }
 
-// Import data dengan validasi lengkap
+// Import data
 function importData(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -630,27 +738,24 @@ function importData(event) {
             const fileContent = e.target.result;
             const imported = JSON.parse(fileContent);
 
-            // Validasi struktur dasar file import
             if (!imported || typeof imported !== "object") {
                 throw new Error("Struktur file tidak valid");
             }
 
-            // Siapkan data yang akan diimpor
             let importCandidates = [];
             if (imported.version && imported.data) {
-                // File dari versi sistem yang sama
                 if (imported.version !== SYSTEM_VERSION) {
                     showModal(
                         "Peringatan",
-                        "File backup dari versi berbeda. Akan mencoba konversi data.",
+                        "File backup dari versi berbeda. Akan mencoba konversi.",
                         "Lanjutkan",
+                        {type: 'warning'},
                         () => processImportData(imported.data || [])
                     );
                     return;
                 }
                 importCandidates = imported.data || [];
             } else if (Array.isArray(imported)) {
-                // File dari versi lama atau format array mentah
                 importCandidates = imported;
             } else {
                 throw new Error("Format file tidak dikenali");
@@ -658,192 +763,46 @@ function importData(event) {
 
             processImportData(importCandidates);
         } catch (err) {
-            showModal("Error", `Gagal mengimpor data: ${err.message}`, "OK", null);
-        } finally {
-            // Cleanup FileReader dan input
-            event.target.value = "";
+            showModal("Error", `Gagal mengimpor: ${err.message}`, "OK", {type: 'error'});
         }
     };
-    
-    reader.onerror = () => {
-        showModal("Error", "Gagal membaca file. Silakan coba lagi.", "OK", null);
-        event.target.value = "";
-    };
-    
     reader.readAsText(file);
+    event.target.value = "";
 }
 
-// Proses data yang akan diimpor dengan validasi menyeluruh
-function processImportData(candidates) {
-    // Filter hanya data yang valid
-    const validLinks = candidates.filter(link => {
-        if (!isValidLink(link)) return false;
-        // Tambahan: validasi URL bisa diparse
-        try {
-            const urlObj = new URL(link.url.trim());
-            return urlObj.hostname && urlObj.hostname.length > 0;
-        } catch {
-            return false;
-        }
-    });
+function processImportData(importedArray) {
+    const validLinks = importedArray.filter(item => isValidLink(item));
     
-    const invalidCount = candidates.length - validLinks.length;
-
-    // Tampilkan ringkasan sebelum import
-    let message = `Ditemukan ${validLinks.length} link valid`;
-    if (invalidCount > 0) {
-        message += ` dan ${invalidCount} data tidak valid (akan diabaikan)`;
+    if (validLinks.length === 0) {
+        showModal("Error", "Tidak ada data valid di file ini.", "OK", {type: 'error'});
+        return;
     }
-    message += ". Ingin mengganti data saat ini atau menggabungkannya?";
 
-    // Setup modal untuk konfirmasi import
-    document.getElementById("modal-title").textContent = "Konfirmasi Impor";
-    document.getElementById("modal-message").textContent = message;
-    document.getElementById("modal-confirm").textContent = "Ganti";
-    document.getElementById("modal-cancel").textContent = "Gabung";
-
-    // Set primary action (Ganti)
-    modalAction = () => {
-        links = validLinks.map(link => ({
-            name: sanitizeInput(link.name.trim()),
-            url: new URL(link.url.trim()).href,
-            clicks: parseInt(link.clicks) || 0,
-            lastUsed: link.lastUsed || new Date().toISOString()
-        }));
-        save();
-        lastRenderQuery = null;
-        render();
-        showModal("Berhasil", "Data berhasil diganti dengan yang baru!", "OK", null);
-    };
-
-    // Set merge action
-    modalMergeAction = () => {
-        let addedCount = 0;
-        validLinks.forEach(newLink => {
-            const normalizedUrl = new URL(newLink.url.trim()).href;
-            if (!links.some(existing => new URL(existing.url).href === normalizedUrl)) {
-                links.push({
-                    name: sanitizeInput(newLink.name.trim()),
-                    url: normalizedUrl,
-                    clicks: parseInt(newLink.clicks) || 0,
-                    lastUsed: newLink.lastUsed || new Date().toISOString()
-                });
-                addedCount++;
-            }
-        });
-        save();
-        lastRenderQuery = null;
-        render();
-        hideModal();
-        showModal("Berhasil", `${addedCount} link baru berhasil ditambahkan!`, "OK", null);
-    };
-
-    // Setup cancel button to handle merge action
-    const cancelBtn = document.getElementById("modal-cancel");
-    cancelBtn.onclick = function(e) {
-        e.preventDefault();
-        if (modalMergeAction) {
-            modalMergeAction();
+    showModal(
+        "Konfirmasi Impor",
+        `Ditemukan ${validLinks.length} link. Pilih aksi:`,
+        "Ganti",
+        {type: 'info'},
+        () => {
+            links = validLinks;
+            save();
+            render();
+            showToast(`${validLinks.length} link berhasil diimpor`, 'success');
         }
-    };
-
-    document.getElementById("modal").style.display = "flex";
+    );
 }
 
-// Debounced search handler
-function handleSearch() {
-    clearTimeout(searchDebounceTimer);
-    searchDebounceTimer = setTimeout(() => {
-        render();
-    }, SEARCH_DEBOUNCE_DELAY);
-}
-
-// Inisialisasi sistem saat halaman dimuat
-window.onload = function() {
-    // Setup keyboard shortcuts
-    document.addEventListener("keydown", (e) => {
-        // Escape key untuk cancel drag / close modal/form
-        if (e.key === "Escape") {
-            // Cancel drag jika sedang drag
-            if (dragState.isDragging) {
-                dragState.isDragging = false;
-                dragState.draggedElement = null;
-                dragState.draggingFromIndex = null;
-                dragState.lastHoverIndex = null;
-                dragState.workingOrder = null;
-                dragState.visibleLinks = null;
-                render();
-                return;
-            }
-            
-            const modal = document.getElementById("modal");
-            const form = document.getElementById("form");
-            if (modal.style.display === "flex") {
-                hideModal();
-            } else if (form.style.display !== "none") {
-                toggleForm();
-            }
-        }
-        // Ctrl/Cmd + K untuk focus search
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-            e.preventDefault();
-            document.getElementById("search").focus();
-        }
-    });
-
-    // Setup form keyboard support
-    const nameInput = document.getElementById("name");
-    const urlInput = document.getElementById("url");
-    
-    // Consolidate space key handling untuk menghindari duplikasi
-    const preventSpaceDefault = (e) => {
-        if (e.key === " ") {
-            e.stopPropagation();
-        }
-    };
-    
-    nameInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-            urlInput.focus();
-            e.preventDefault();
-        }
-        preventSpaceDefault(e);
-    });
-
-    urlInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-            addLink();
-            e.preventDefault();
-        }
-        preventSpaceDefault(e);
-    });
-
-    // Debounced search listener
-    document.getElementById("search").addEventListener("input", handleSearch);
-
+// Search with debounce
+document.addEventListener('DOMContentLoaded', () => {
     initData();
-};
-
-// Cleanup saat page unload untuk mencegah memory leak
-window.addEventListener("beforeunload", () => {
-    // Clear global state
-    links = [];
-    faviconCache = {};
-    modalAction = null;
-    modalMergeAction = null;
-    lastRenderQuery = null;
-    dragState = {
-        isDragging: false,
-        draggedElement: null,
-        draggedUrl: null,
-        startX: 0,
-        startY: 0,
-        offsetX: 0,
-        offsetY: 0,
-        draggingFromIndex: null,
-        lastHoverIndex: null,
-        workingOrder: null,
-        visibleLinks: null
-    };
-    clearTimeout(searchDebounceTimer);
+    
+    const searchInput = document.getElementById("search");
+    if (searchInput) {
+        searchInput.addEventListener("input", () => {
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(() => {
+                render();
+            }, SEARCH_DEBOUNCE_DELAY);
+        });
+    }
 });

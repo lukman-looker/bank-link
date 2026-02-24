@@ -39,11 +39,28 @@
 </head>
 <body>
     <div class="container">
-        <!-- Header dengan tombol backup/restore -->
+        <!-- Theme Toggle & Settings -->
+        <div class="top-bar">
+            <button class="btn-theme" id="theme-toggle" onclick="toggleDarkMode()" 
+                    aria-label="Toggle dark mode" title="Gelap/Terang">
+                <i class="fas fa-moon"></i>
+            </button>
+            <div class="sort-controls">
+                <select id="sort-select" class="sort-dropdown" onchange="changeSortOption()" 
+                        aria-label="Urutkan berdasarkan">
+                    <option value="manual">Manual Order</option>
+                    <option value="recent">Paling Baru Ditambah</option>
+                    <option value="mostUsed">Paling Sering Digunakan</option>
+                    <option value="alphabetical">A-Z</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Header dengan search dan action buttons -->
         <div class="header">
             <div class="search-wrapper">
                 <i class="fas fa-search search-icon"></i>
-                <input id="search" class="search-input" placeholder="Cari..." 
+                <input id="search" class="search-input" placeholder="Cari link..." 
                        aria-label="Cari link" aria-describedby="search-help">
                 <span id="search-help" hidden>Tekan Ctrl+K untuk focus search</span>
             </div>
@@ -57,9 +74,9 @@
                         aria-label="Impor data dari JSON" title="Impor data">
                     <i class="fas fa-upload"></i>
                 </button>
-                <button class="btn btn-add" onclick="toggleForm()" 
+                <button class="btn btn-add btn-primary-main" onclick="toggleForm()" 
                         aria-label="Tambah link baru" title="Tambah link">
-                    <i class="fas fa-plus"></i>
+                    <i class="fas fa-plus"></i><span class="btn-text">Tambah</span>
                 </button>
             </div>
 
@@ -67,31 +84,99 @@
                    aria-label="File untuk import data">
         </div>
 
-        <!-- Form Tambah Link -->
-        <div id="form" class="link-form" role="form" aria-label="Form tambah link">
-            <div class="form-group">
-                <label for="name" class="form-label">Nama Link</label>
-                <input id="name" class="form-input" placeholder="Contoh: Google" aria-label="Nama link" required>
-            </div>
-            <div class="form-group">
-                <label for="url" class="form-label">URL</label>
-                <input id="url" class="form-input" placeholder="https://example.com atau example.com" 
-                       aria-label="URL link" required>
-            </div>
-            <button class="btn-save" onclick="addLink()" aria-label="Simpan link baru">
-                <i class="fas fa-check"></i> Simpan
+        <!-- Form Tambah Link - Always visible in collapsible style -->
+        <div id="form-container" class="form-container">
+            <button class="form-collapse-btn" onclick="toggleForm()" aria-label="Tutup form">
+                <i class="fas fa-chevron-down"></i>
             </button>
+            <div id="form" class="link-form" role="form" aria-label="Form tambah link">
+                <h3 class="form-title">Tambah Link Baru</h3>
+                <div class="form-group">
+                    <label for="name" class="form-label">Nama Link</label>
+                    <input id="name" class="form-input" placeholder="Contoh: Google" aria-label="Nama link" required>
+                </div>
+                <div class="form-group">
+                    <label for="url" class="form-label">URL</label>
+                    <input id="url" class="form-input" placeholder="https://example.com atau example.com" 
+                           aria-label="URL link" required>
+                </div>
+                <div class="form-group">
+                    <label for="color-tag" class="form-label">Label Warna (Optional)</label>
+                    <div class="color-picker">
+                        <input type="radio" name="color" id="color-none" value="" checked class="color-radio">
+                        <label for="color-none" class="color-label color-label-none" title="None">-</label>
+                        
+                        <input type="radio" name="color" id="color-red" value="red" class="color-radio">
+                        <label for="color-red" class="color-label" style="background: #ff6b6b;" title="Red"></label>
+                        
+                        <input type="radio" name="color" id="color-pink" value="pink" class="color-radio">
+                        <label for="color-pink" class="color-label" style="background: #ff6b9d;" title="Pink"></label>
+                        
+                        <input type="radio" name="color" id="color-purple" value="purple" class="color-radio">
+                        <label for="color-purple" class="color-label" style="background: #845ef7;" title="Purple"></label>
+                        
+                        <input type="radio" name="color" id="color-blue" value="blue" class="color-radio">
+                        <label for="color-blue" class="color-label" style="background: #339af0;" title="Blue"></label>
+                        
+                        <input type="radio" name="color" id="color-cyan" value="cyan" class="color-radio">
+                        <label for="color-cyan" class="color-label" style="background: #1c7ed6;" title="Cyan"></label>
+                        
+                        <input type="radio" name="color" id="color-green" value="green" class="color-radio">
+                        <label for="color-green" class="color-label" style="background: #51cf66;" title="Green"></label>
+                        
+                        <input type="radio" name="color" id="color-yellow" value="yellow" class="color-radio">
+                        <label for="color-yellow" class="color-label" style="background: #ffd43b;" title="Yellow"></label>
+                        
+                        <input type="radio" name="color" id="color-orange" value="orange" class="color-radio">
+                        <label for="color-orange" class="color-label" style="background: #ff922b;" title="Orange"></label>
+                    </div>
+                </div>
+                <button class="btn-save btn-primary-main" onclick="addLink()" aria-label="Simpan link baru">
+                    <i class="fas fa-check"></i> Simpan Link
+                </button>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="empty-state" class="empty-state" role="status" aria-live="polite">
+            <div class="empty-state-content">
+                <i class="fas fa-link empty-state-icon"></i>
+                <h2>Belum Ada Link</h2>
+                <p>Mulai dengan menambahkan link pertama Anda. Klik tombol <strong>"+ Tambah"</strong> di atas atau tekan <kbd>Ctrl+N</kbd> untuk membuat yang baru.</p>
+                <button class="btn btn-primary-main" onclick="toggleForm()" style="margin-top: 16px;">
+                    <i class="fas fa-plus"></i> Mulai Sekarang
+                </button>
+            </div>
+        </div>
+
+        <!-- Search No Results State -->
+        <div id="no-results-state" class="empty-state" style="display: none;" role="status" aria-live="polite">
+            <div class="empty-state-content">
+                <i class="fas fa-search empty-state-icon"></i>
+                <h2>Tidak Ada Hasil</h2>
+                <p id="no-results-text">Tidak ditemukan link yang cocok. Coba ubah pencarian Anda.</p>
+                <button class="btn btn-secondary-main" onclick="document.getElementById('search').value=''; render();" style="margin-top: 16px;">
+                    <i class="fas fa-redo"></i> Reset Pencarian
+                </button>
+            </div>
         </div>
 
         <!-- Grid Link -->
+        <div id="links-stats" class="links-stats" role="status" aria-live="polite">
+            <span id="links-count">0</span> link
+        </div>
         <div id="links" class="links-grid" role="region" aria-label="Daftar link"></div>
 
-        <!-- Custom Modal -->
+        <!-- Toast Notification -->
+        <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+        <!-- Custom Modal with Types -->
         <div id="modal" class="modal-overlay" role="dialog" aria-modal="true">
-            <div class="modal-content">
+            <div class="modal-content" id="modal-content">
                 <button class="modal-close" onclick="hideModal()" aria-label="Tutup dialog">
                     <i class="fas fa-times"></i>
                 </button>
+                <div id="modal-icon" class="modal-icon"></div>
                 <h3 id="modal-title" class="modal-title"></h3>
                 <p id="modal-message" class="modal-message"></p>
                 <div class="modal-buttons">
