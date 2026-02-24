@@ -314,8 +314,9 @@ function render() {
                 }
                 dragState.lastHoverIndex = newHoverIndex;
                 
-                // Update visual positions
-                const allCards = container.querySelectorAll(".link-card");
+                // Update visual positions - gunakan fresh selector untuk reliable access
+                const linksContainer = document.getElementById("links");
+                const allCards = linksContainer.querySelectorAll(".link-card");
                 allCards.forEach((cardDOM) => {
                     if (cardDOM === card) return; // Skip dragging card
                     
@@ -344,15 +345,28 @@ function render() {
                 // Hanya update dan render jika ada perubahan posisi
                 const hasChanges = dragState.lastHoverIndex !== dragState.draggingFromIndex;
                 if (hasChanges) {
+                    // Gunakan working order yang sudah di-reorder sebagai new links array
                     links = dragState.workingOrder;
                     save();
                     
-                    // Reset state dan render ulang
-                    dragState.draggingFromIndex = null;
-                    dragState.lastHoverIndex = null;
-                    dragState.workingOrder = null;
-                    dragState.visibleLinks = null;
-                    render();
+                    // Animate card ke posisi final dengan smooth transition
+                    const cardHeight = card.offsetHeight + 12;
+                    const moveDistance = (dragState.lastHoverIndex - dragState.draggingFromIndex) * cardHeight;
+                    
+                    // Apply smooth transition
+                    card.style.transition = "transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)";
+                    card.style.transform = `translateY(${moveDistance}px)`;
+                    card.style.opacity = "1";
+                    card.classList.remove("dragging-card");
+                    
+                    // After animation completes, render for clean state
+                    setTimeout(() => {
+                        dragState.draggingFromIndex = null;
+                        dragState.lastHoverIndex = null;
+                        dragState.workingOrder = null;
+                        dragState.visibleLinks = null;
+                        render();
+                    }, 300);
                 } else {
                     // Tidak ada perubahan, hanya reset styling
                     dragState.draggingFromIndex = null;
