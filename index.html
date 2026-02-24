@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <!-- Meta Charset & Viewport -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    
+    <!-- Document Title -->
+    <title>Link Bank - Manajer Link Pribadi</title>
+    
+    <!-- App & Theme Settings -->
+    <meta name="theme-color" content="#007bff">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Link Bank">
+    
+    <!-- Favicons & Touch Icons -->
+    <link rel="icon" href="./assets/icons/favicon.ico" type="image/x-icon">
+    <link rel="shortcut icon" href="./assets/icons/favicon.ico" type="image/x-icon">
+    <link rel="icon" type="image/png" sizes="16x16" href="./assets/icons/favicon-16x16.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="./assets/icons/favicon-32x32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="./assets/icons/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="./assets/icons/android-chrome-192x192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="./assets/icons/android-chrome-512x512.png">
+    <link rel="manifest" href="./assets/icons/site.webmanifest">
+    
+    <!-- Preload CSS untuk performance -->
+    <link rel="preload" href="./assets/css/styles.css" as="style">
+    
+    <!-- CSS Stylesheets -->
+    <link rel="stylesheet" href="./assets/css/styles.css">
+    
+    <!-- Font Awesome CDN (Primary) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css">
+    
+    <!-- Font Awesome CDN (Fallback) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" 
+          crossorigin="anonymous" referrerpolicy="no-referrer">
+</head>
+<body>
+    <div class="container">
+        <!-- Header dengan tombol backup/restore -->
+        <div class="header">
+            <div class="search-wrapper">
+                <i class="fas fa-search search-icon"></i>
+                <input id="search" class="search-input" placeholder="Cari..." 
+                       aria-label="Cari link" aria-describedby="search-help">
+                <span id="search-help" hidden>Tekan Ctrl+K untuk focus search</span>
+            </div>
+
+            <div class="header-actions">
+                <button class="btn btn-export" onclick="exportData()" 
+                        aria-label="Ekspor data sebagai JSON" title="Ekspor data">
+                    <i class="fas fa-download"></i>
+                </button>
+                <button class="btn btn-import" onclick="document.getElementById('import-input').click()" 
+                        aria-label="Impor data dari JSON" title="Impor data">
+                    <i class="fas fa-upload"></i>
+                </button>
+                <button class="btn btn-add" onclick="toggleForm()" 
+                        aria-label="Tambah link baru" title="Tambah link">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+
+            <input type="file" id="import-input" accept=".json" class="btn-hide" onchange="importData(event)"
+                   aria-label="File untuk import data">
+        </div>
+
+        <!-- Form Tambah Link -->
+        <div id="form" class="link-form" role="form" aria-label="Form tambah link">
+            <div class="form-group">
+                <label for="name" class="form-label">Nama Link</label>
+                <input id="name" class="form-input" placeholder="Contoh: Google" aria-label="Nama link" required>
+            </div>
+            <div class="form-group">
+                <label for="url" class="form-label">URL</label>
+                <input id="url" class="form-input" placeholder="https://example.com atau example.com" 
+                       aria-label="URL link" required>
+            </div>
+            <button class="btn-save" onclick="addLink()" aria-label="Simpan link baru">
+                <i class="fas fa-check"></i> Simpan
+            </button>
+        </div>
+
+        <!-- Grid Link -->
+        <div id="links" class="links-grid" role="region" aria-label="Daftar link"></div>
+
+        <!-- Custom Modal -->
+        <div id="modal" class="modal-overlay" role="dialog" aria-modal="true">
+            <div class="modal-content">
+                <button class="modal-close" onclick="hideModal()" aria-label="Tutup dialog">
+                    <i class="fas fa-times"></i>
+                </button>
+                <h3 id="modal-title" class="modal-title"></h3>
+                <p id="modal-message" class="modal-message"></p>
+                <div class="modal-buttons">
+                    <button id="modal-cancel" class="btn btn-secondary" onclick="hideModal()">Batal</button>
+                    <button id="modal-confirm" class="btn btn-primary" onclick="executeModalAction()"></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="./assets/js/script.js"></script>
+</body>
+</html>
